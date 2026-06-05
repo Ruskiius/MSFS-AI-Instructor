@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using System.Threading;
 
 if (!OperatingSystem.IsWindows())
 {
@@ -8,8 +9,8 @@ if (!OperatingSystem.IsWindows())
 }
 
 TelemetrySnapshot? latestTelemetry = null;
-object telemetryLock = new();
 bool keepRunning = true;
+DateTime? lastPrintedTelemetryTimestamp = null;
 
 Console.CancelKeyPress += (_, eventArgs) =>
 {
@@ -23,11 +24,7 @@ using SimConnectTelemetryService telemetryService = new();
 telemetryService.TelemetryReceived += (_, snapshot) =>
 {
     csvLogger.Write(snapshot);
-
-    lock (telemetryLock)
-    {
-        latestTelemetry = snapshot;
-    }
+    Interlocked.Exchange(ref latestTelemetry, snapshot);
 };
 
 telemetryService.ErrorOccurred += (_, message) =>
@@ -51,12 +48,7 @@ try
 
     while (keepRunning)
     {
-        TelemetrySnapshot? snapshot;
-
-        lock (telemetryLock)
-        {
-            snapshot = latestTelemetry;
-        }
+        TelemetrySnapshot? snapshot = Volatile.Read(ref latestTelemetry);
 
         if (snapshot is null)
         {
@@ -64,7 +56,11 @@ try
         }
         else
         {
-            PrintTelemetry(snapshot);
+            if (lastPrintedTelemetryTimestamp != snapshot.Timestamp)
+            {
+                PrintTelemetry(snapshot);
+                lastPrintedTelemetryTimestamp = snapshot.Timestamp;
+            }
         }
 
         await Task.Delay(TimeSpan.FromSeconds(1));

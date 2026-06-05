@@ -1,16 +1,19 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using System.Threading;
 
 public sealed class SimConnectTelemetryService : IDisposable
 {
     private const int DispatchQueueEmpty = unchecked((int)0x80004005);
     private const uint SimConnectObjectIdUser = 0;
     private const uint SimConnectUnused = 0xFFFFFFFF;
+    private static readonly TimeSpan ReadTaskStopTimeout = TimeSpan.FromSeconds(2);
 
     private IntPtr _simConnectHandle = IntPtr.Zero;
     private CancellationTokenSource? _readCancellation;
     private Task? _readTask;
     private bool _isDisposed;
+    private bool _readStopTimeoutReported;
 
     public event EventHandler<TelemetrySnapshot>? TelemetryReceived;
     public event EventHandler<string>? ErrorOccurred;
@@ -55,19 +58,7 @@ public sealed class SimConnectTelemetryService : IDisposable
 
     public void Stop()
     {
-        _readCancellation?.Cancel();
-
-        try
-        {
-            _readTask?.Wait(TimeSpan.FromSeconds(2));
-        }
-        catch (AggregateException ex) when (AllInnerExceptionsAreCancellation(ex))
-        {
-        }
-
-        _readCancellation?.Dispose();
-        _readCancellation = null;
-        _readTask = null;
+        StopReadTask();
     }
 
     public void Dispose()
@@ -77,15 +68,48 @@ public sealed class SimConnectTelemetryService : IDisposable
             return;
         }
 
-        Stop();
+        _isDisposed = true;
 
-        if (_simConnectHandle != IntPtr.Zero)
+        bool readTaskStopped = StopReadTask();
+
+        if (_simConnectHandle == IntPtr.Zero)
         {
-            NativeMethods.SimConnect_Close(_simConnectHandle);
-            _simConnectHandle = IntPtr.Zero;
+            return;
         }
 
-        _isDisposed = true;
+        if (readTaskStopped)
+        {
+            CloseSimConnectHandle();
+            return;
+        }
+
+        Task? pendingReadTask = _readTask;
+        CancellationTokenSource? pendingReadCancellation = _readCancellation;
+
+        if (pendingReadTask is null)
+        {
+            return;
+        }
+
+        _ = pendingReadTask.ContinueWith(
+            _ =>
+            {
+                CloseSimConnectHandle();
+                pendingReadCancellation?.Dispose();
+
+                if (ReferenceEquals(_readCancellation, pendingReadCancellation))
+                {
+                    _readCancellation = null;
+                }
+
+                if (ReferenceEquals(_readTask, pendingReadTask))
+                {
+                    _readTask = null;
+                }
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
     }
 
     private async Task ReadDispatchLoopAsync(CancellationToken cancellationToken)
@@ -95,6 +119,11 @@ public sealed class SimConnectTelemetryService : IDisposable
             while (!cancellationToken.IsCancellationRequested && _simConnectHandle != IntPtr.Zero)
             {
                 int result = NativeMethods.SimConnect_GetNextDispatch(_simConnectHandle, out IntPtr messagePointer, out _);
+
+                if (cancellationToken.IsCancellationRequested || _isDisposed)
+                {
+                    break;
+                }
 
                 if (result == 0)
                 {
@@ -233,6 +262,77 @@ public sealed class SimConnectTelemetryService : IDisposable
     private void ThrowIfDisposed()
     {
         ObjectDisposedException.ThrowIf(_isDisposed, this);
+    }
+
+    private bool StopReadTask()
+    {
+        Task? readTask = _readTask;
+        CancellationTokenSource? readCancellation = _readCancellation;
+
+        readCancellation?.Cancel();
+
+        if (readTask is null)
+        {
+            readCancellation?.Dispose();
+            _readCancellation = null;
+            return true;
+        }
+
+        try
+        {
+            if (!readTask.Wait(ReadTaskStopTimeout))
+            {
+                ReportReadStopTimeout();
+                return false;
+            }
+        }
+        catch (AggregateException ex) when (AllInnerExceptionsAreCancellation(ex))
+        {
+        }
+
+        readCancellation?.Dispose();
+
+        if (ReferenceEquals(_readCancellation, readCancellation))
+        {
+            _readCancellation = null;
+        }
+
+        if (ReferenceEquals(_readTask, readTask))
+        {
+            _readTask = null;
+        }
+
+        _readStopTimeoutReported = false;
+        return true;
+    }
+
+    private void ReportReadStopTimeout()
+    {
+        if (_readStopTimeoutReported)
+        {
+            return;
+        }
+
+        _readStopTimeoutReported = true;
+        ErrorOccurred?.Invoke(this, "Timed out waiting for SimConnect read loop to stop; preserving the native handle until the loop exits.");
+    }
+
+    private void CloseSimConnectHandle()
+    {
+        IntPtr handle = Interlocked.Exchange(ref _simConnectHandle, IntPtr.Zero);
+
+        if (handle == IntPtr.Zero)
+        {
+            return;
+        }
+
+        try
+        {
+            NativeMethods.SimConnect_Close(handle);
+        }
+        catch (Exception ex) when (ex is COMException or Win32Exception or SEHException)
+        {
+        }
     }
 
     private static void ThrowIfFailed(int result, string operation)
