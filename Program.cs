@@ -17,10 +17,13 @@ Console.CancelKeyPress += (_, eventArgs) =>
     keepRunning = false;
 };
 
+using TelemetryCsvLogger csvLogger = new();
 using SimConnectTelemetryService telemetryService = new();
 
 telemetryService.TelemetryReceived += (_, snapshot) =>
 {
+    csvLogger.Write(snapshot);
+
     lock (telemetryLock)
     {
         latestTelemetry = snapshot;

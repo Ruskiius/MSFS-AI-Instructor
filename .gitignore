@@ -1,5 +1,6 @@
 .vs/
 bin/
 obj/
+Logs/
 *.user
 *.suo
