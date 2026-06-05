@@ -5,6 +5,7 @@ public sealed class TelemetryCsvLogger : IDisposable
     private readonly DateTime _startTimeUtc;
     private readonly StreamWriter _writer;
     private readonly object _writeLock = new();
+    private bool _isDisposed;
 
     public TelemetryCsvLogger()
     {
@@ -21,25 +22,30 @@ public sealed class TelemetryCsvLogger : IDisposable
 
     public void Write(TelemetrySnapshot telemetry)
     {
-        DateTime timestampUtc = telemetry.Timestamp.ToUniversalTime();
-        double elapsedSeconds = (timestampUtc - _startTimeUtc).TotalSeconds;
-
-        string row = string.Join(
-            ",",
-            timestampUtc.ToString("O", CultureInfo.InvariantCulture),
-            elapsedSeconds.ToString("F3", CultureInfo.InvariantCulture),
-            telemetry.AirspeedIndicatedKnots.ToString("F3", CultureInfo.InvariantCulture),
-            telemetry.IndicatedAltitudeFeet.ToString("F3", CultureInfo.InvariantCulture),
-            telemetry.HeadingMagneticDegrees.ToString("F3", CultureInfo.InvariantCulture),
-            telemetry.VerticalSpeedFeetPerMinute.ToString("F3", CultureInfo.InvariantCulture),
-            telemetry.PitchDegrees.ToString("F3", CultureInfo.InvariantCulture),
-            telemetry.BankDegrees.ToString("F3", CultureInfo.InvariantCulture),
-            telemetry.LatitudeDegrees.ToString("F6", CultureInfo.InvariantCulture),
-            telemetry.LongitudeDegrees.ToString("F6", CultureInfo.InvariantCulture),
-            telemetry.IsOnGround.ToString(CultureInfo.InvariantCulture));
-
         lock (_writeLock)
         {
+            if (_isDisposed)
+            {
+                return;
+            }
+
+            DateTime timestampUtc = telemetry.Timestamp.ToUniversalTime();
+            double elapsedSeconds = (timestampUtc - _startTimeUtc).TotalSeconds;
+
+            string row = string.Join(
+                ",",
+                timestampUtc.ToString("O", CultureInfo.InvariantCulture),
+                elapsedSeconds.ToString("F3", CultureInfo.InvariantCulture),
+                telemetry.AirspeedIndicatedKnots.ToString("F3", CultureInfo.InvariantCulture),
+                telemetry.IndicatedAltitudeFeet.ToString("F3", CultureInfo.InvariantCulture),
+                telemetry.HeadingMagneticDegrees.ToString("F3", CultureInfo.InvariantCulture),
+                telemetry.VerticalSpeedFeetPerMinute.ToString("F3", CultureInfo.InvariantCulture),
+                telemetry.PitchDegrees.ToString("F3", CultureInfo.InvariantCulture),
+                telemetry.BankDegrees.ToString("F3", CultureInfo.InvariantCulture),
+                telemetry.LatitudeDegrees.ToString("F6", CultureInfo.InvariantCulture),
+                telemetry.LongitudeDegrees.ToString("F6", CultureInfo.InvariantCulture),
+                telemetry.IsOnGround.ToString(CultureInfo.InvariantCulture));
+
             _writer.WriteLine(row);
             _writer.Flush();
         }
@@ -47,7 +53,16 @@ public sealed class TelemetryCsvLogger : IDisposable
 
     public void Dispose()
     {
-        _writer.Dispose();
+        lock (_writeLock)
+        {
+            if (_isDisposed)
+            {
+                return;
+            }
+
+            _isDisposed = true;
+            _writer.Dispose();
+        }
     }
 
     private void WriteHeader()
