@@ -20,7 +20,7 @@ public sealed class TelemetryCsvLogger : IDisposable
         WriteHeader();
     }
 
-    public void Write(TelemetrySnapshot telemetry)
+    public void Write(TelemetrySnapshot telemetry, FlightState flightState)
     {
         lock (_writeLock)
         {
@@ -44,7 +44,8 @@ public sealed class TelemetryCsvLogger : IDisposable
                 telemetry.BankDegrees.ToString("F3", CultureInfo.InvariantCulture),
                 telemetry.LatitudeDegrees.ToString("F6", CultureInfo.InvariantCulture),
                 telemetry.LongitudeDegrees.ToString("F6", CultureInfo.InvariantCulture),
-                telemetry.IsOnGround.ToString(CultureInfo.InvariantCulture));
+                telemetry.IsOnGround.ToString(CultureInfo.InvariantCulture),
+                flightState.ToString());
 
             _writer.WriteLine(row);
             _writer.Flush();
@@ -78,7 +79,8 @@ public sealed class TelemetryCsvLogger : IDisposable
             "BankDegrees," +
             "Latitude," +
             "Longitude," +
-            "IsOnGround");
+            "IsOnGround," +
+            "FlightState");
 
         _writer.Flush();
     }

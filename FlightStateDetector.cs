@@ -17,10 +17,19 @@ public sealed class FlightStateDetector
     private DateTime? _landingTime;
     private double? _departureFieldElevationFeet;
 
+    public FlightStateDiagnostics LastDiagnostics { get; private set; } =
+        new(null, null, null, null, FlightState.Unknown);
+
     public FlightState Detect(TelemetrySnapshot snapshot)
+    {
+        return Detect(snapshot, out _);
+    }
+
+    public FlightState Detect(TelemetrySnapshot snapshot, out FlightStateDiagnostics diagnostics)
     {
         RecordDepartureFieldElevationIfNeeded(snapshot);
 
+        FlightState previousFlightState = _previousState;
         bool justBecameAirborne = _hasPreviousSnapshot && _wasOnGround && !snapshot.IsOnGround;
         bool justTouchedDown = _hasPreviousSnapshot && !_wasOnGround && snapshot.IsOnGround;
 
@@ -37,7 +46,18 @@ public sealed class FlightStateDetector
         }
 
         double? estimatedAglFeet = EstimateAglFeet(snapshot);
+        double? secondsSinceTakeoff = GetSecondsSinceTakeoff(snapshot);
+        double? secondsSinceLanding = GetSecondsSinceLanding(snapshot);
         FlightState detectedState = DetectState(snapshot, justBecameAirborne, justTouchedDown, estimatedAglFeet);
+
+        diagnostics = new FlightStateDiagnostics(
+            estimatedAglFeet,
+            _departureFieldElevationFeet,
+            secondsSinceTakeoff,
+            secondsSinceLanding,
+            previousFlightState);
+
+        LastDiagnostics = diagnostics;
 
         _previousState = detectedState;
         _wasOnGround = snapshot.IsOnGround;
@@ -163,5 +183,25 @@ public sealed class FlightStateDetector
         }
 
         return snapshot.IndicatedAltitudeFeet - _departureFieldElevationFeet.Value;
+    }
+
+    private double? GetSecondsSinceTakeoff(TelemetrySnapshot snapshot)
+    {
+        if (_takeoffTime is null)
+        {
+            return null;
+        }
+
+        return (snapshot.Timestamp - _takeoffTime.Value).TotalSeconds;
+    }
+
+    private double? GetSecondsSinceLanding(TelemetrySnapshot snapshot)
+    {
+        if (_landingTime is null)
+        {
+            return null;
+        }
+
+        return (snapshot.Timestamp - _landingTime.Value).TotalSeconds;
     }
 }

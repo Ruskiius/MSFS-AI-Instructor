@@ -9,6 +9,7 @@ if (!OperatingSystem.IsWindows())
 }
 
 TelemetrySnapshot? latestTelemetry = null;
+FlightStateDiagnostics? latestFlightStateDiagnostics = null;
 int latestFlightStateValue = (int)FlightState.Unknown;
 bool keepRunning = true;
 DateTime? lastPrintedTelemetryTimestamp = null;
@@ -25,11 +26,12 @@ FlightStateDetector flightStateDetector = new();
 
 telemetryService.TelemetryReceived += (_, snapshot) =>
 {
-    FlightState flightState = flightStateDetector.Detect(snapshot);
+    FlightState flightState = flightStateDetector.Detect(snapshot, out FlightStateDiagnostics diagnostics);
 
-    csvLogger.Write(snapshot);
-    Interlocked.Exchange(ref latestTelemetry, snapshot);
+    csvLogger.Write(snapshot, flightState);
+    Interlocked.Exchange(ref latestFlightStateDiagnostics, diagnostics);
     Interlocked.Exchange(ref latestFlightStateValue, (int)flightState);
+    Interlocked.Exchange(ref latestTelemetry, snapshot);
 };
 
 telemetryService.ErrorOccurred += (_, message) =>
@@ -64,8 +66,9 @@ try
             if (lastPrintedTelemetryTimestamp != snapshot.Timestamp)
             {
                 FlightState flightState = (FlightState)Volatile.Read(ref latestFlightStateValue);
+                FlightStateDiagnostics? diagnostics = Volatile.Read(ref latestFlightStateDiagnostics);
 
-                PrintTelemetry(snapshot, flightState);
+                PrintTelemetry(snapshot, flightState, diagnostics);
                 lastPrintedTelemetryTimestamp = snapshot.Timestamp;
             }
         }
@@ -96,8 +99,12 @@ catch (Win32Exception ex)
     return 1;
 }
 
-static void PrintTelemetry(TelemetrySnapshot telemetry, FlightState flightState)
+static void PrintTelemetry(TelemetrySnapshot telemetry, FlightState flightState, FlightStateDiagnostics? diagnostics)
 {
+    string estimatedAglText = diagnostics?.EstimatedAglFeet is null
+        ? string.Empty
+        : $" | AGL {diagnostics.EstimatedAglFeet.Value,6:F0} ft";
+
     Console.WriteLine(
         $"{telemetry.Timestamp:HH:mm:ss} | " +
         $"IAS {telemetry.AirspeedIndicatedKnots,6:F1} kt | " +
@@ -109,5 +116,6 @@ static void PrintTelemetry(TelemetrySnapshot telemetry, FlightState flightState)
         $"LAT {telemetry.LatitudeDegrees,10:F6} | " +
         $"LON {telemetry.LongitudeDegrees,11:F6} | " +
         $"GROUND {(telemetry.IsOnGround ? "Yes" : "No")} | " +
-        $"STATE {flightState}");
+        $"STATE: {flightState}" +
+        estimatedAglText);
 }
