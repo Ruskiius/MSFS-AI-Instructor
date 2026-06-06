@@ -47,6 +47,7 @@ public sealed class TelemetryCsvLogger : IDisposable
                 telemetry.IsOnGround.ToString(CultureInfo.InvariantCulture));
 
             _writer.WriteLine(row);
+            _writer.Flush();
         }
     }
 

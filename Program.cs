@@ -9,6 +9,7 @@ if (!OperatingSystem.IsWindows())
 }
 
 TelemetrySnapshot? latestTelemetry = null;
+int latestFlightStateValue = (int)FlightState.Unknown;
 bool keepRunning = true;
 DateTime? lastPrintedTelemetryTimestamp = null;
 
@@ -20,11 +21,15 @@ Console.CancelKeyPress += (_, eventArgs) =>
 
 using TelemetryCsvLogger csvLogger = new();
 using SimConnectTelemetryService telemetryService = new();
+FlightStateDetector flightStateDetector = new();
 
 telemetryService.TelemetryReceived += (_, snapshot) =>
 {
+    FlightState flightState = flightStateDetector.Detect(snapshot);
+
     csvLogger.Write(snapshot);
     Interlocked.Exchange(ref latestTelemetry, snapshot);
+    Interlocked.Exchange(ref latestFlightStateValue, (int)flightState);
 };
 
 telemetryService.ErrorOccurred += (_, message) =>
@@ -58,7 +63,9 @@ try
         {
             if (lastPrintedTelemetryTimestamp != snapshot.Timestamp)
             {
-                PrintTelemetry(snapshot);
+                FlightState flightState = (FlightState)Volatile.Read(ref latestFlightStateValue);
+
+                PrintTelemetry(snapshot, flightState);
                 lastPrintedTelemetryTimestamp = snapshot.Timestamp;
             }
         }
@@ -89,7 +96,7 @@ catch (Win32Exception ex)
     return 1;
 }
 
-static void PrintTelemetry(TelemetrySnapshot telemetry)
+static void PrintTelemetry(TelemetrySnapshot telemetry, FlightState flightState)
 {
     Console.WriteLine(
         $"{telemetry.Timestamp:HH:mm:ss} | " +
@@ -101,5 +108,6 @@ static void PrintTelemetry(TelemetrySnapshot telemetry)
         $"BANK {telemetry.BankDegrees,6:F1} deg | " +
         $"LAT {telemetry.LatitudeDegrees,10:F6} | " +
         $"LON {telemetry.LongitudeDegrees,11:F6} | " +
-        $"GROUND {(telemetry.IsOnGround ? "Yes" : "No")}");
+        $"GROUND {(telemetry.IsOnGround ? "Yes" : "No")} | " +
+        $"STATE {flightState}");
 }
